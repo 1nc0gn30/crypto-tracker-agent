@@ -5,12 +5,8 @@ import {
   AlertCircle,
   TrendingUp,
   TrendingDown,
-  BrainCircuit,
   Download,
   Zap,
-  Key,
-  Check,
-  ShieldAlert,
   Clock3,
   Network,
   Gauge,
@@ -19,7 +15,6 @@ import {
   BarChart3,
   LineChart,
 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
 
 interface CryptoData {
   [key: string]: {
@@ -55,7 +50,6 @@ interface MarketIntelligence {
   dominance: Array<{ symbol: string; share: number }>;
   divergencePairs: Array<{ pair: string; spread: number }>;
   correlations: Array<{ pair: string; value: number }>;
-  aiContext: string;
 }
 
 interface HistoricalPoint {
@@ -65,7 +59,7 @@ interface HistoricalPoint {
   volume: number;
 }
 
-interface TradeSignal {
+interface MarketSignal {
   action: 'BUY' | 'SELL' | 'HOLD';
   confidence: number;
   reason: string;
@@ -213,41 +207,35 @@ const maxDrawdownPct = (values: number[]) => {
   return maxDrawdown;
 };
 
-const extractJsonObject = (text: string) => {
-  const direct = text.trim();
-  if (direct.startsWith('{') && direct.endsWith('}')) return direct;
+const buildMarketSignal = (intelligence: MarketIntelligence): MarketSignal => {
+  const positiveRatio = intelligence.positiveCount / COINS.length;
+  const avgChange = intelligence.avgChange;
+  const volatility = intelligence.volatility;
 
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first >= 0 && last > first) return text.slice(first, last + 1);
-  return '';
-};
-
-const parseTradeSignal = (raw: string): TradeSignal => {
-  try {
-    const json = extractJsonObject(raw);
-    if (!json) throw new Error('No JSON payload.');
-    const parsed = JSON.parse(json) as Partial<TradeSignal>;
-
-    const action = parsed.action === 'BUY' || parsed.action === 'SELL' || parsed.action === 'HOLD' ? parsed.action : 'HOLD';
-    const confidence = Math.max(0, Math.min(100, Number(parsed.confidence ?? 50)));
-
+  if (positiveRatio >= 0.67 && avgChange > 1.25) {
     return {
-      action,
-      confidence,
-      reason: String(parsed.reason ?? 'No reason returned by model.'),
-      risk: String(parsed.risk ?? 'No risk note returned by model.'),
-    };
-  } catch {
-    const upper = raw.toUpperCase();
-    const action: TradeSignal['action'] = upper.includes('SELL') ? 'SELL' : upper.includes('BUY') ? 'BUY' : 'HOLD';
-    return {
-      action,
-      confidence: 45,
-      reason: raw.slice(0, 180) || 'Unable to parse model output.',
-      risk: 'Model output did not return strict JSON.',
+      action: 'BUY',
+      confidence: Math.min(91, Math.round(58 + positiveRatio * 30 + Math.min(avgChange, 5) * 2)),
+      reason: `Breadth is strong (${intelligence.positiveCount}/${COINS.length}) with positive average move (${avgChange.toFixed(2)}%).`,
+      risk: volatility > 4 ? 'Volatility is elevated; size entries conservatively.' : 'Momentum can reverse quickly after sharp rallies.',
     };
   }
+
+  if (positiveRatio <= 0.33 && avgChange < -1.25) {
+    return {
+      action: 'SELL',
+      confidence: Math.min(91, Math.round(58 + (1 - positiveRatio) * 30 + Math.min(Math.abs(avgChange), 5) * 2)),
+      reason: `Breadth is weak (${intelligence.positiveCount}/${COINS.length}) with negative average move (${avgChange.toFixed(2)}%).`,
+      risk: volatility > 4 ? 'Sharp relief bounces are common in risk-off regimes.' : 'Signal degrades if leaders recover quickly.',
+    };
+  }
+
+  return {
+    action: 'HOLD',
+    confidence: Math.max(42, Math.round(62 - Math.min(Math.abs(avgChange), 6) * 2)),
+    reason: `Market is in ${intelligence.regime.toLowerCase()} with mixed participation.`,
+    risk: 'Breakouts can fail in choppy conditions; wait for clearer breadth confirmation.',
+  };
 };
 
 const buildIntelligence = (currentData: CryptoData, history: MarketSnapshot[]): MarketIntelligence => {
@@ -331,25 +319,6 @@ const buildIntelligence = (currentData: CryptoData, history: MarketSnapshot[]): 
         ? 'Risk-Off Compression'
         : 'Mixed Rotation';
 
-  const aiContext = [
-    `Regime: ${regime}`,
-    `Breadth: ${positiveCount}/${COINS.length} positive`,
-    `Average 24h Change: ${avgChange.toFixed(2)}%`,
-    `Cross-Asset Volatility: ${volatility.toFixed(2)}%`,
-    `Leaders: ${leaders.map((coin) => `${coin.symbol} ${coin.change24h.toFixed(2)}%`).join(', ')}`,
-    `Laggards: ${laggards.map((coin) => `${coin.symbol} ${coin.change24h.toFixed(2)}%`).join(', ')}`,
-    `Top Divergences: ${divergencePairs
-      .sort((a, b) => b.spread - a.spread)
-      .slice(0, 4)
-      .map((pair) => `${pair.pair} ${pair.spread.toFixed(2)}%`)
-      .join(', ')}`,
-    `Top Correlations: ${correlations
-      .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-      .slice(0, 4)
-      .map((pair) => `${pair.pair} ${pair.value.toFixed(2)}`)
-      .join(', ') || 'insufficient history'}`,
-  ].join('\n');
-
   return {
     coins,
     positiveCount,
@@ -361,7 +330,6 @@ const buildIntelligence = (currentData: CryptoData, history: MarketSnapshot[]): 
     dominance,
     divergencePairs: divergencePairs.sort((a, b) => b.spread - a.spread).slice(0, 5),
     correlations: correlations.sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 5),
-    aiContext,
   };
 };
 
@@ -518,22 +486,8 @@ export default function App() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('GEMINI_USER_KEY') || '');
   const [selectedCoinId, setSelectedCoinId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  const ai = useMemo(() => {
-    const key = userApiKey.trim();
-    if (!key) return null;
-    return new GoogleGenAI({ apiKey: key });
-  }, [userApiKey]);
-
-  const [aiSynthesis, setAiSynthesis] = useState<string | null>(null);
-  const [tradeSignal, setTradeSignal] = useState<TradeSignal | null>(null);
-  const [synthesizing, setSynthesizing] = useState(false);
-  const lastSynthesisTime = useRef<number>(0);
-  const hasApiKey = userApiKey.trim().length > 0;
   const cursorCoreRef = useRef<HTMLDivElement | null>(null);
   const cursorGlowRef = useRef<HTMLDivElement | null>(null);
 
@@ -551,6 +505,11 @@ export default function App() {
     if (!selectedCoin) return [] as HistoricalPoint[];
     return historicalByCoin[selectedCoin.id] ?? [];
   }, [selectedCoin, historicalByCoin]);
+
+  const marketSignal = useMemo(() => {
+    if (!intelligence) return null;
+    return buildMarketSignal(intelligence);
+  }, [intelligence]);
 
   const selectedCoinAnalytics = useMemo(() => {
     if (!selectedCoin || !selectedCoinHistory.length) return null;
@@ -615,52 +574,6 @@ export default function App() {
     }
   };
 
-  const generateSynthesis = async (currentData: CryptoData, contextSummary: string, force = false) => {
-    if (!ai) {
-      setAiSynthesis('API Key required for synthesis.');
-      return;
-    }
-
-    const now = Date.now();
-    if (!force && now - lastSynthesisTime.current < 240000 && aiSynthesis) return;
-
-    setSynthesizing(true);
-    try {
-      const prompt = `You are an elite crypto trading AI analyst.
-
-Return ONLY a JSON object using this exact schema:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "confidence": number, // 0-100
-  "reason": string, // <= 140 chars
-  "risk": string // <= 140 chars
-}
-
-Use this relational context and market data:
-${contextSummary}
-
-Raw data:
-${JSON.stringify(currentData)}`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-      });
-
-      const text = response.text || '';
-      const signal = parseTradeSignal(text);
-      setTradeSignal(signal);
-      setAiSynthesis(`${signal.action} (${signal.confidence.toFixed(0)}%): ${signal.reason}`);
-      lastSynthesisTime.current = now;
-    } catch (err) {
-      console.error('AI synthesis failed:', err);
-      setAiSynthesis('AI analysis failed. Check your key and quota.');
-      setTradeSignal(null);
-    } finally {
-      setSynthesizing(false);
-    }
-  };
-
   const fetchData = async () => {
     setLoading(true);
     setError(null);
@@ -679,11 +592,6 @@ ${JSON.stringify(currentData)}`;
       setMarketHistory(nextHistory);
       setData(json);
       setLastUpdated(new Date());
-
-      const latestIntelligence = buildIntelligence(json, nextHistory);
-      if (hasApiKey) {
-        generateSynthesis(json, latestIntelligence.aiContext);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
     } finally {
@@ -769,9 +677,7 @@ ${JSON.stringify(currentData)}`;
             laggards: intelligence.laggards.map((coin) => coin.symbol),
           }
         : null,
-      ai_signal: tradeSignal,
-      compliance_hash: `simulated_sha256_${Date.now().toString(16)}`,
-      agent_signature: 'SYS.AGENT_VERIFIED',
+      market_signal: marketSignal,
     };
 
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
@@ -781,28 +687,6 @@ ${JSON.stringify(currentData)}`;
     a.download = `crypto_tax_snapshot_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  const handleSaveKey = () => {
-    const key = userApiKey.trim();
-    if (!key) {
-      localStorage.removeItem('GEMINI_USER_KEY');
-      return;
-    }
-
-    localStorage.setItem('GEMINI_USER_KEY', key);
-    setShowKeyInput(false);
-
-    if (data && intelligence) {
-      generateSynthesis(data, intelligence.aiContext, true);
-    }
-  };
-
-  const handleClearKey = () => {
-    setUserApiKey('');
-    localStorage.removeItem('GEMINI_USER_KEY');
-    setAiSynthesis('API Key required for synthesis.');
-    setTradeSignal(null);
   };
 
   return (
@@ -820,7 +704,7 @@ ${JSON.stringify(currentData)}`;
                 Crypto Intelligence Deck
               </div>
               <h1 className="text-balance text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl">
-                Real-time market structure with actionable AI trade signals
+                Real-time market structure with actionable trade insights
               </h1>
               <p className="max-w-2xl text-sm text-zinc-300/80 sm:text-base">
                 Click any asset for real historical charts (price, volume, market cap) and interactive exploration.
@@ -828,20 +712,6 @@ ${JSON.stringify(currentData)}`;
             </div>
 
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-              <button
-                onClick={() => setShowKeyInput(!showKeyInput)}
-                className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold tracking-wide transition-colors ${
-                  hasApiKey
-                    ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-300 hover:bg-emerald-500/18'
-                    : 'border-amber-500/40 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20'
-                }`}
-                title={hasApiKey ? 'API Key Active' : 'API Key Required'}
-                aria-label={hasApiKey ? 'API key active' : 'API key required'}
-              >
-                {hasApiKey ? <Key className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
-                {hasApiKey ? 'AI Key Active' : 'BYOK Required'}
-              </button>
-
               <button
                 onClick={fetchData}
                 disabled={loading}
@@ -875,50 +745,6 @@ ${JSON.stringify(currentData)}`;
             </div>
           </div>
         </header>
-
-        {showKeyInput && (
-          <section className="panel-glass rounded-2xl border border-zinc-800/85 p-5 sm:p-6" aria-label="Gemini API key setup">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="flex items-center gap-2 text-sm font-bold tracking-wide text-cyan-300 uppercase">
-                <Key className="h-4 w-4" />
-                Gemini API Key Configuration
-              </h2>
-              {hasApiKey && (
-                <button
-                  onClick={handleClearKey}
-                  className="cursor-pointer text-[11px] text-zinc-500 underline decoration-zinc-700 underline-offset-4 transition-colors hover:text-rose-300"
-                >
-                  Clear Stored Key
-                </button>
-              )}
-            </div>
-
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <label htmlFor="gemini-key" className="sr-only">
-                Gemini API key
-              </label>
-              <input
-                id="gemini-key"
-                type="password"
-                value={userApiKey}
-                onChange={(event) => setUserApiKey(event.target.value)}
-                placeholder="Enter Gemini API key"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-950/95 px-3 py-2.5 text-sm text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-cyan-400"
-              />
-              <button
-                onClick={handleSaveKey}
-                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-400/15 px-4 py-2.5 text-sm font-semibold text-cyan-200 transition-colors hover:bg-cyan-400/25"
-              >
-                <Check className="h-4 w-4" />
-                Save Key
-              </button>
-            </div>
-
-            <p className="mt-3 text-xs leading-relaxed text-zinc-400">
-              BYOK only. Once saved, AI instantly analyzes market structure and returns a BUY / SELL / HOLD signal.
-            </p>
-          </section>
-        )}
 
         {error && (
           <section className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-4 text-rose-200" aria-live="polite">
@@ -1164,56 +990,40 @@ ${JSON.stringify(currentData)}`;
             <aside className="grid grid-cols-1 gap-5">
               <section className="panel-glass rounded-2xl border border-zinc-800/85 p-5">
                 <div className="mb-3 flex items-center gap-2 text-cyan-300">
-                  <BrainCircuit className="h-4 w-4" />
-                  <h2 className="text-sm font-bold tracking-wide uppercase">AI Trade Signal</h2>
+                  <Activity className="h-4 w-4" />
+                  <h2 className="text-sm font-bold tracking-wide uppercase">Market Signal</h2>
                 </div>
 
-                {hasApiKey ? (
+                {marketSignal ? (
                   <div className="space-y-3">
-                    {tradeSignal && (
-                      <div className="rounded-lg border border-zinc-700 bg-zinc-950/85 p-3">
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-xs font-bold tracking-wide ${
-                              tradeSignal.action === 'BUY'
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : tradeSignal.action === 'SELL'
-                                  ? 'bg-rose-500/20 text-rose-300'
-                                  : 'bg-amber-500/20 text-amber-300'
-                            }`}
-                          >
-                            {tradeSignal.action}
-                          </span>
-                          <span className="text-xs text-zinc-400">Confidence {tradeSignal.confidence.toFixed(0)}%</span>
-                        </div>
-                        <p className="mt-2 text-sm text-zinc-200">{tradeSignal.reason}</p>
-                        <p className="mt-1 text-xs text-zinc-500">Risk: {tradeSignal.risk}</p>
-                      </div>
-                    )}
-
-                    <p className="min-h-[48px] text-sm leading-relaxed text-zinc-200/90">
-                      {synthesizing ? (
-                        <span className="inline-flex items-center gap-2 text-zinc-300">
-                          <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
-                          Analyzing and generating BUY/SELL/HOLD...
+                    <div className="rounded-lg border border-zinc-700 bg-zinc-950/85 p-3">
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-bold tracking-wide ${
+                            marketSignal.action === 'BUY'
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : marketSignal.action === 'SELL'
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-amber-500/20 text-amber-300'
+                          }`}
+                        >
+                          {marketSignal.action}
                         </span>
-                      ) : (
-                        aiSynthesis || 'Awaiting first analysis run...'
-                      )}
-                    </p>
+                        <span className="text-xs text-zinc-400">Confidence {marketSignal.confidence.toFixed(0)}%</span>
+                      </div>
+                      <p className="mt-2 text-sm text-zinc-200">{marketSignal.reason}</p>
+                      <p className="mt-1 text-xs text-zinc-500">Risk: {marketSignal.risk}</p>
+                    </div>
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
-                    <p className="text-sm font-semibold text-amber-300">AI analysis is locked in BYOK mode.</p>
-                    <p className="mt-1 text-xs text-amber-100/75">Save your Gemini key to start BUY/SELL/HOLD analysis immediately.</p>
-                  </div>
+                  <p className="text-sm text-zinc-400">Waiting for enough market data to compute signal.</p>
                 )}
               </section>
 
               <section className="panel-glass rounded-2xl border border-zinc-800/85 p-5">
                 <div className="mb-4 flex items-center gap-2 text-emerald-300">
                   <Zap className="h-4 w-4" />
-                  <h2 className="text-sm font-bold tracking-wide uppercase">Agentic Tools</h2>
+                  <h2 className="text-sm font-bold tracking-wide uppercase">Export Tools</h2>
                 </div>
 
                 <div className="space-y-3">
@@ -1244,7 +1054,7 @@ ${JSON.stringify(currentData)}`;
         )}
 
         <footer className="pb-4 text-center text-xs tracking-wide text-zinc-500">
-          LIVE DATA STREAM • REAL HISTORICAL CHARTS • BYOK MODE • COINGECKO API
+          LIVE DATA STREAM • REAL HISTORICAL CHARTS • COINGECKO API
         </footer>
       </div>
       <div ref={cursorGlowRef} className="liquid-cursor liquid-cursor-glow" aria-hidden="true" />
