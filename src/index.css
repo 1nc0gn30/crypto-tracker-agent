@@ -1,0 +1,147 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  background:
+    radial-gradient(circle at 12% 16%, rgba(56, 189, 248, 0.12), transparent 30%),
+    radial-gradient(circle at 88% 82%, rgba(16, 185, 129, 0.1), transparent 34%),
+    linear-gradient(160deg, #090b12 0%, #070910 42%, #04050a 100%);
+  color: #f4f4f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-texture-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background:
+    url('/textures/liquid-mesh.svg') center/cover no-repeat,
+    url('/textures/topography.svg') center/cover no-repeat,
+    url('/textures/noise-dither.svg') 0 0/260px 260px repeat;
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+
+.app-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 20% 8%, rgba(34, 211, 238, 0.08), transparent 26%),
+    radial-gradient(circle at 80% 92%, rgba(52, 211, 153, 0.08), transparent 24%);
+  z-index: -1;
+}
+
+.app-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 100% 3px;
+  opacity: 0.15;
+  mix-blend-mode: soft-light;
+}
+
+.panel-glass {
+  background: linear-gradient(150deg, rgba(24, 24, 27, 0.82), rgba(9, 9, 11, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 50px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+  transition: border-color 220ms ease, box-shadow 240ms ease, transform 240ms ease;
+}
+
+.panel-glass:hover {
+  border-color: rgba(56, 189, 248, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 64px rgba(0, 0, 0, 0.5);
+}
+
+.coin-card {
+  position: relative;
+  border-image: linear-gradient(160deg, rgba(34, 211, 238, 0.24), rgba(24, 24, 27, 0.8)) 1;
+}
+
+.coin-card::after {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(110deg, transparent 35%, rgba(56, 189, 248, 0.08) 50%, transparent 62%);
+  transform: translateX(-55%);
+  transition: transform 450ms ease;
+  pointer-events: none;
+}
+
+.coin-card:hover::after {
+  transform: translateX(55%);
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Space Grotesk', 'JetBrains Mono', ui-sans-serif, system-ui, sans-serif;
+}
+
+.liquid-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  z-index: 80;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.liquid-cursor-core::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.95), rgba(56, 189, 248, 0.8));
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.65);
+}
+
+.liquid-cursor-glow::before {
+  content: '';
+  position: absolute;
+  left: -76px;
+  top: -76px;
+  width: 152px;
+  height: 152px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 38% 36%, rgba(56, 189, 248, 0.28), rgba(56, 189, 248, 0) 62%),
+    radial-gradient(circle at 62% 62%, rgba(52, 211, 153, 0.2), rgba(52, 211, 153, 0) 68%);
+  filter: blur(8px) saturate(130%);
+  mix-blend-mode: screen;
+}
+
+@media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .liquid-cursor {
+    display: none;
+  }
+}

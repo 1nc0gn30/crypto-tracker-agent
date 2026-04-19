@@ -1,0 +1,6 @@
+{
+  "name": "Crypto Tracker Agent",
+  "author": "Tech Pro",
+  "description": "Live cryptocurrency price tracker using CoinGecko API.",
+  "requestFramePermissions": []
+}
